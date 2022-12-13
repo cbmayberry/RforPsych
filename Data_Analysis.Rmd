@@ -1,0 +1,514 @@
+---
+title: "Data_Analysis"
+author: "Caroline Mayberry"
+date: "`r Sys.Date()`"
+output: html_document
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+knitr::opts_chunk$set(message = FALSE) #whether to display messages
+knitr::opts_chunk$set(collapse = TRUE) #less spacing between source code and text output blocks when knit
+
+#make sure script produces an output file if testing:
+knitr::opts_chunk$set(error = TRUE) #keep compiling output document even if there is an error
+```
+
+# [Data Wrangling]{.ul}
+
+```{r packages}
+
+#Read/export files
+library(readxl) #excel
+library(haven) #SPSS
+
+#Format data frames
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(reshape2)
+
+#Analyze
+library(PerformanceAnalytics)
+library(corrplot)
+library(Hmisc)
+library(expss) #cross tabulation
+library(lme4) #MLM
+library(performance) #test for multicollinearity
+library(effects) #glmer effects and summary tables
+#library(glmmTMB) #binomial models with overdispersion
+library(lmerTest) #prints p-values
+options(scipen=999) #turns off scientific notation
+options(digits=3) #number of significant digits when printing values
+
+#Plot
+library(ggplot2)
+library(classifierplots)
+library(yardstick)
+library(RColorBrewer)
+library(dichromat)
+library(ggeffects) #glmm marginal effects
+library(jtools) #plot glmm effects and predicted effects with confidence intervals
+
+```
+
+**Reference Guides for R Packages:**
+
+* [ggpredict vs. ggeffects](https://strengejacke.github.io/ggeffects/reference/ggpredict.html)
+  + ggpredict() uses the reference level, while ggeffect() and ggemmeans() compute a kind of "average" value, which represents the proportions of each factor's category.  
+* [ggeffects (for random effects)](https://cran.r-project.org/web/packages/ggeffects/vignettes/introduction_randomeffects.html)
+  + the fixed effects and zero-inflation component (population-level), taking the random-effect variances into account (type = "zi_random"). Similar to mixed models without zero-inflation component, type = "fixed" and type = "random" for glmmTMB-models (with zero-inflation) both return predictions on the population-level, where the latter option accounts for the uncertainty of the random effects.
+* [performance](https://easystats.github.io/see/articles/performance.html) 
+  + test for multicollinearity
+
+## Tidy Data
+
+Recode levels of a factor variable:
+```{r Recode lvls factor var}
+levels(data$var.f)[levels(data$var.f) == "x"] <- "y"
+```
+
+Centering:
+```{r Centering}
+#Center Age
+AllData$Age.cent <- AllData$Age - mean(AllData$Age)
+```
+
+Group Mean Centering:
+```{r Group Mean Centering}
+#Mean Center Pen Lifts for each Letter group
+AllData <- AllData %>%
+  group_by(Letter) %>%
+  mutate(PenLifts.letterMean = mean(PenLifts.Freq)) #mean PenLifts for letter
+
+AllData <- AllData %>%
+  mutate(PenLifts.c = (PenLifts.Freq - PenLifts.letterMean)) #center scores by letter group mean
+
+plot(AllData$PenLifts.Freq)
+plot(AllData$PenLifts.c)
+```
+
+Check Missing Data:
+```{r Check Missing Data}
+cro(df$ID, df$var)
+```
+
+
+Subset data:
+```{r Subset}
+#by column
+corData <- subset(wideData, select = c(Age, var1, var2))
+
+#by value
+subset <- data[which(data$var == "y"),]
+```
+
+Dummy code:
+```{r Dummy code}
+data$DummyCode <- NA
+data$DummyCode[which(data$var == "n")] <- 0
+data$DummyCode[which(data$var == "y")] <- 1
+```
+
+
+Match levels of var in two files/data frames: 
+```{r Merge by factor lvl}
+#set ID as factor
+data1$ID <- as.factor(data1$ID)
+data2$ID <- as.factor(data2$ID)
+
+#filter for only IDs that appear in data2
+data1filtered <- data1[data1$ID %in% data2$ID,]
+
+#remove factor levels for IDs that were filtered out
+data1filtered$ID <- droplevels(data1filtered$ID)
+```
+
+Add to repeated measures data set (loop through all rows):
+```{r fill RM data, echo = FALSE, warning = FALSE}
+rmData$Age <- NA
+rmData$Sex <- NA
+
+for (i in levels(rmData$ID)){
+  rmData$Age[rmData$ID == i] <- wideData$Age[wideData$ID == i]
+  rmData$Sex[rmData$ID == i] <- wideData$Sex[wideData$ID == i]
+}
+```
+
+Calculate count/frequency from repeated measures and add to wide format data:
+```{r Get count from RM}
+wideData$Freq <- NA
+
+#loop through each subject
+for (id in levels(rmData$ID)){
+  #set count to 0 each time
+  count <- 0
+  #subset by participant
+  idSet <- subset(rmData, rmData$ID == id)
+  #loop rows associated w that ID# and count occurence of var
+  for (r in 1:nrow(idSet)){
+    if (idSet$var[r] == "y"){
+      count <- count + 1
+    }
+  }
+  #input count for each subj
+  wideData$Freq[wideData$ID == id] <- count
+}
+```
+
+------------------------------------------------------------------------
+
+# [Desc Stats, Freq & Plots]{.ul}
+
+```{r Packages}
+library(ggplot2)
+```
+
+Print descriptive statistics for subjects:
+```{r Sample Descriptives, echo = FALSE}
+#N and n female
+cat("N = ", length(data$ID), ", (", length(subset(data$Sex, data$Sex == "F")), "F )", "\n")
+
+#mean age 
+cat("mean age (mo): ", mean(data$AgeMo),"\n")
+#SD age
+cat("sd age (mo): ", sd(data$AgeMo),"\n")
+#Age range
+cat("range: " , range(subjData$Age.in.Months))
+
+```
+
+<!-- # library(skimr) -->
+<!-- # DescStats <- skim(SubjTotalScores) -->
+<!-- #  -->
+<!-- # DescStats.pK <- skim(SubjTotalScoresPK[which(SubjTotalScoresPK$Kgrd == 0),]) -->
+<!-- # DescStats.K <- skim(SubjTotalScoresPK[which(SubjTotalScoresPK$Kgrd == 1),]) -->
+
+
+Frequency Tables:
+
+[Frequencies and Crosstabs Tutorial](https://www.statmethods.net/stats/frequencies.html)
+
+```{r Frequency Tables}
+library(expss)
+
+#one var
+cat("Overall event frequencies:")
+cro(dvData$Event)
+cat("\n\n")
+
+#crosstab
+cat("Events by Age(months):")
+cro(dvData$Event.f, dvData$Age)
+cat("\n\n")
+```
+
+
+Histograms:
+```{r Histograms}
+#For all columns of a dataframe:
+hist(AvgSubjData)
+
+#Plot each subject, sorted by age, segmented bar for factor var
+ggplot(data, aes(x=reorder(ID, Age), fill = factor.var)) +
+   geom_bar()
+
+#Same, but with facet_wrap to separate plots by second factor var
+ggplot(data, aes(x=reorder(ID, Age), fill = factor.var)) +
+   geom_bar()+
+   facet_wrap(as.factor(data$factor.var2))
+```
+
+```{r histograms loop}
+#select variables
+ distData <- subset(allData, select = c(var1, var2))
+
+#Change columns to numeric type
+distData <- distData %>% mutate_if(is.character,as.numeric)
+distData <- distData %>% mutate_if(is.factor,as.numeric)
+for( i in 1:ncol(distData)){
+  hist(distData[,i], main = colnames(distData)[i],xlab = colnames(distData)[i], col = 'pink')
+}
+
+
+
+#break down by group
+distDataPK <- distData[which(distData$GradeGroup == "0"), ]
+for( i in 1:ncol(distDataPK)){
+  hist(distDataPK[,i], main = colnames(distDataPK)[i],xlab = colnames(distDataPK)[i], col = 'light blue')
+}
+
+distDataK <- distData[which(distData$GradeGroup == "1"), ]
+for( i in 1:ncol(distDataK)){
+  hist(distDataK[,i], main = colnames(distDataK)[i],xlab = colnames(distDataK)[i], col = 'blue')
+}
+
+#Check dist of each variable
+variableData <- subset(binaryData, select = c("var1", "var2"))
+for( i in 1:ncol(variableData)){
+  hist(variableData[,i], main = colnames(variableData)[i],xlab = colnames(variableData)[i], col = 'yellow')
+}
+```
+
+
+Scatter Plot:
+```{r Scatter Plot}
+#basic
+plot(wideData$Age, wideData$var, main="Age x Var",
+   xlab="Age (mo) ", ylab="Var", pch=19)
+
+#ggplot2
+ggplot(data = data, aes(x= var1, y = var2)) +
+  geom_point() +
+  labs(title = "Title") +
+  theme_minimal()
+
+#ggplot2 with color grouped points
+ggplot(data = data, aes(x= var1, y = var2, colour = factor.var)) +
+  geom_point() +
+  labs(title = "Title") +
+  theme_minimal()
+```
+
+Counts Plot:
+- to overcome the problem of data points overlap is to use what is called a counts chart. Whereever there is more points overlap, the size of the circle gets bigger.
+[Counts Plot Source](http://r-statistics.co/Top50-Ggplot2-Visualizations-MasterList-R-Code.html#Counts%20Chart)
+```{r Counts Plot}
+theme_set(theme_bw())  # pre-set the bw theme.
+g <- ggplot(mpg, aes(cty, hwy))
+g + geom_count(col="tomato3", show.legend=F) +
+  labs(subtitle="mpg: city vs highway mileage", 
+       y="hwy", 
+       x="cty", 
+       title="Counts Plot")
+```
+
+
+Boxplot:
+```{r Boxplot}
+freq_table <- data.frame(table(data$ID, data$var.f))
+
+ggplot(freq_table, aes(x = var.f, y = Freq)) + 
+  geom_boxplot() + 
+  ylab(names(levels(freq_table$var.f)))
+
+```
+
+Marginal Histogram/Boxplot:
+[Marginal Plot Source](http://r-statistics.co/Top50-Ggplot2-Visualizations-MasterList-R-Code.html#Counts%20Chart)
+```{r Marginal Plots}
+# load package and data
+library(ggplot2)
+library(ggExtra)
+data(mpg, package="ggplot2")
+# mpg <- read.csv("http://goo.gl/uEeRGu")
+
+# Scatterplot
+theme_set(theme_bw())  # pre-set the bw theme.
+mpg_select <- mpg[mpg$hwy >= 35 & mpg$cty > 27, ]
+g <- ggplot(mpg, aes(cty, hwy)) + 
+  geom_count() + 
+  geom_smooth(method="lm", se=F)
+
+ggMarginal(g, type = "histogram", fill="transparent")
+ggMarginal(g, type = "boxplot", fill="transparent")
+# ggMarginal(g, type = "density", fill="transparent")
+```
+
+
+------------------------------------------------------------------------
+
+# [ggplot2]{.ul}
+
+[Cheat Sheet](https://www.maths.usyd.edu.au/u/UG/SM/STAT3022/r/current/Misc/data-visualization-2.1.pdf)
+
+### Themes
+
+```{r ggplot themes}
+p + theme_grey() #default
+p + theme_bw()
+p + theme_minimal() 
+p + theme_classic() 
+```
+
+### Labels
+
+```{r labelled ggplot}
+ggplot(data = mtcars, aes(x = wt, y = mpg)) +
+  geom_point() +
+  labs(title = "Fuel Efficiency by Car Weight",
+       subtitle = "Motor Trend Magazine 1973",
+       caption = "source: mtcars dataset",
+       x = "Weight (1000 lbs)",
+       y = "Miles per gallon") +
+ 
+   theme(plot.title    = element_text(family = "bell", size=14),
+         plot.subtitle = element_text(family = "gochi"),
+         plot.caption  = element_text(family = "caveat", size=15),
+         axis.title    = element_text(family = "comic"),
+         axis.text     = element_text(family = "comic", 
+                                      face="italic", size=8))
+```
+
+------------------------------------------------------------------------
+
+# [Correlations]{.ul}
+
+```{r Correlation Matrix}
+#subset only columns that will be in correlation analysis
+corData <- subset(wideData, select = c(Age, var1, var2))
+
+library(PerformanceAnalytics)
+chart.Correlation(corData, histogram=FALSE, pch = "+")
+
+library(Hmisc)
+variablesCor <- rcorr(as.matrix(corData))
+corrplot(variablesCor$r, type="upper", 
+         p.mat = variablesCor$P, 
+         sig.level = 0.05, insig = "blank", tl.col="black", 
+         tl.srt=45, diag=FALSE, addCoef.col = "black")
+```
+
+## Co-occurence of types of handwriting errors
+Look at co-occurence of types of handwriting errors
+(Source)[https://towardsdatascience.com/how-to-create-co-occurrence-networks-with-the-r-packages-cooccur-and-visnetwork-f6e1ceb1c523]
+```{r Co-occurence, layout="l-body",  echo=FALSE}
+# #Transpose data
+# dataTransposed <- subset(errorCoded, select = -c(ID, variable, Visit, HandwritingSum, HandwritingBinary))
+# dataTransposed[is.na(dataTransposed)] <- 0
+# dataTransposed <- t(dataTransposed)
+# 
+# library(cooccur)
+# 
+# #Print significant pairwise co-occurrences and their labels.
+# co <- print(cooccur(dataTransposed, spp_names = TRUE))
+# 
+# detach("package:cooccur", unload = TRUE)
+```
+
+
+# [Modeling]{.ul}
+
+### Family Objects for Models
+
+> | binomial(link = "logit")
+> | gaussian(link = "identity")
+> | Gamma(link = "inverse")
+> | inverse.gaussian(link = "1/mu\^2")
+> | poisson(link = "log")
+> | quasi(link = "identity", variance = "constant")
+> | quasibinomial(link = "logit")
+> | quasipoisson(link = "log")
+
+
+### Save to .doc Format
+```{r model .doc output table}
+#Save output table to a .doc file
+tab_model(uncond_model, randomslope_model, show.re.var = TRUE, show.stat = TRUE, show.se=TRUE, show.ci = FALSE, show.reflvl = TRUE,  p.style = "stars", file = "final model.doc")
+```
+
+
+### Simple Linear Models
+
+```{r lm}
+#Usage lm {stats}
+lm(formula, data, subset, weights, na.action,
+   method = "qr", model = TRUE, x = FALSE, y = FALSE, qr = TRUE,
+   singular.ok = TRUE, contrasts = NULL, offset, ...)
+```
+
+#### Plot
+
+```{r plot points}
+ggplot(subjData, aes(x, y)) +
+  geom_point() +
+  stat_smooth(method = lm)
+```
+
+### GLM
+
+Generalized Linear Models
+
+```{r GLM}
+#Usage {stats}
+glm(formula, family = gaussian, data, weights, subset,
+    na.action, start = NULL, etastart, mustart, offset,
+    control = list(...), model = TRUE, method = "glm.fit",
+    x = FALSE, y = TRUE, singular.ok = TRUE, contrasts = NULL, ...)
+
+glm.fit(x, y, weights = rep.int(1, nobs),
+        start = NULL, etastart = NULL, mustart = NULL,
+        offset = rep.int(0, nobs), family = gaussian(),
+        control = list(), intercept = TRUE, singular.ok = TRUE)
+
+#example w normal dist
+summary(m1 <- glm(var1 ~ Age, family="gaussian", data=wideData))
+```
+
+##### Plot effects
+
+```{r effects plot}
+library(effects)
+plot(allEffects(m1))
+```
+
+### Linear Mixed-Effects Models
+
+> The main features distinguishing lme4 from nlme are:
+>
+> 1.  more efficient linear algebra tools, giving improved performance on large problems
+> 2.  simpler syntax and more efficient implementation for fitting models with crossed random effects
+> 3.  the implementation of profile likelihood confidence intervals on random-effects parameters
+> 4.  the ability to fit generalized linear mixed models
+>
+> @bates2015
+
+```{r LME}
+library(lme4)
+summary(m <- glmer(Success ~ Age.c + (1|ID),
+                   family="poisson", 
+                   data = rmData))
+
+library(effects)
+plot(allEffects(m))
+```
+
+#### Binary Logistic Regression (with crossed random effects)
+
+```{r Cross-Classified Binary Logistic Regression}
+#binary logistic regression
+fullMod <- glmer(y ~ x1 + x2 + (1|ID) + (1|Group),
+              family=binomial("logit"), 
+              data=binaryData)
+summary(fullMod)
+
+ggpredict(fullModLBb, "x1")
+ggpredict(fullModLBb, "x2")
+
+library("effects")
+e1.lm1 <- predictorEffect("x1", fullMod)
+plot(e1.lm1)
+```
+
+### Zero-Inflated Poisson Regression
+
+# [Inter-Rater Reliability]{.ul}
+
+```{r IRR}
+#subset column of scores from each rater
+IRRdata <- cbind(data_c1$var, data_c2$var)
+
+#percent agreement
+agree(IRRdata)
+
+#Unweighted Kappa 
+kappa2(IRRdata, "unweighted")
+
+#ICC 
+icc(IRRdata, model = "twoway", type = "consistency", unit = "single")
+icc(IRRdata, model = "twoway", type = "consistency", unit = "average")
+icc(IRRdata, model = "twoway", type = "agreement", unit = "single")
+icc(IRRdata, model = "twoway", type = "agreement", unit = "average")
+```
