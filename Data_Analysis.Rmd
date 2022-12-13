@@ -404,6 +404,11 @@ Look at co-occurence of types of handwriting errors
 
 
 ### Save to .doc Format
+Will save output file to the current directory
+
+To make sure output is saved in same folder as your code:
+Session -> Set Working Directory -> To Source File Location 
+
 ```{r model .doc output table}
 #Save output table to a .doc file
 tab_model(uncond_model, randomslope_model, show.re.var = TRUE, show.stat = TRUE, show.se=TRUE, show.ci = FALSE, show.reflvl = TRUE,  p.style = "stars", file = "final model.doc")
@@ -490,6 +495,37 @@ ggpredict(fullModLBb, "x2")
 library("effects")
 e1.lm1 <- predictorEffect("x1", fullMod)
 plot(e1.lm1)
+```
+
+#### 3-level Model
+crossed level 2 groupings - ID and in Letter
+nested - ID in task in Letter (?)
+```{r 3 level model}
+#unconditional model
+uncond_model3lvl <- glmer(Success ~ 1 + (1|ID) + (1|Letter), family=binomial, data=AllData.Long)
+summary(uncond_model3lvl)
+
+#add level 1 predictor Age with fixed slope
+fixedslope_model3lvl  <- glmer(Success ~ 1 + Age.cent + Task + (1|ID) + (1|Letter), family=binomial, data=AllData.Long)
+summary(fixedslope_model3lvl)
+
+#random intercept is implied
+#Allow the slope for task to vary by ID & Letter
+randomslope_model3lvl  <- glmer(Success ~ 1 + Age.cent + Task + (Task|ID) + (Task|Letter), family=binomial, data=AllData.Long)
+summary(randomslope_model3lvl)
+
+#Add fixed effect predictors
+full_model3lvl  <- glmer(Success ~ 1 + Age.cent + Task + SameUpperCase + Symmetrical + Reversible + (Task|ID) + (Task|Letter), family=binomial, data=AllData.Long)
+summary(full_model3lvl)
+
+modLRtest3lvl  <- anova(uncond_model3lvl,fixedslope_model3lvl,randomslope_model3lvl,full_model3lvl)
+modLRtest3lvl 
+
+#Save output tables to a .doc file
+tab_model(uncond_model3lvl, randomslope_model3lvl, show.re.var = TRUE, show.stat = TRUE, show.se=TRUE, show.ci = FALSE, show.reflvl = TRUE,  p.style = "stars", file = "NullandRandomSlope.doc")
+
+tab_model(full_model3lvl, show.re.var = TRUE, show.stat = TRUE, show.se=TRUE, show.ci = FALSE, show.reflvl = TRUE,  p.style = "stars", file = "fullModel.doc")
+
 ```
 
 ### Zero-Inflated Poisson Regression
